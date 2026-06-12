@@ -7,56 +7,38 @@ import { authenticate } from "../shopify.server";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type Product = {
+type Order = {
   id: string;
-  title: string;
-  vendor: string;
-  productType: string;
+  name: string;
   tags: string[];
+  displayFinancialStatus: string | null;
+  totalPriceSet: { shopMoney: { amount: string; currencyCode: string } };
+  customer: {
+    displayName: string;
+    defaultEmailAddress: { emailAddress: string } | null;
+  } | null;
 };
 
-type Collection = { id: string; title: string };
-
 type Filters = {
-  collection: string | null;
-  vendor: string | null;
-  productType: string | null;
-  tag: string | null;
   query: string | null;
+  financialStatus: string | null;
   after: string | null;
 };
 
 type LoaderData = {
-  products: Product[];
+  orders: Order[];
   pageInfo: { hasNextPage: boolean; endCursor: string | null };
-  collections: Collection[];
-  vendors: string[];
-  productTypes: string[];
   filters: Filters;
 };
 
 type ActionData = { success: boolean; errorCount: number };
 
-type ProductsResponse = {
+type OrdersResponse = {
   data: {
-    products?: {
+    orders: {
       pageInfo: { hasNextPage: boolean; endCursor: string | null };
-      edges: Array<{ node: Product }>;
+      edges: Array<{ node: Order }>;
     };
-    collection?: {
-      products: {
-        pageInfo: { hasNextPage: boolean; endCursor: string | null };
-        edges: Array<{ node: Product }>;
-      };
-    };
-  };
-};
-
-type FilterOptionsResponse = {
-  data: {
-    collections: { edges: Array<{ node: Collection }> };
-    productVendors: { edges: Array<{ node: string }> };
-    productTypes: { edges: Array<{ node: string }> };
   };
 };
 
@@ -69,31 +51,24 @@ type TagMutationResponse = {
 
 // ─── GraphQL ─────────────────────────────────────────────────────────────────
 
-const GET_PRODUCTS = `#graphql
-  query GetProducts($first: Int!, $after: String, $query: String) {
-    products(first: $first, after: $after, query: $query) {
+const GET_ORDERS = `#graphql
+  query GetOrders($first: Int!, $after: String, $query: String) {
+    orders(first: $first, after: $after, query: $query) {
       pageInfo { hasNextPage endCursor }
-      edges { node { id title vendor productType tags } }
-    }
-  }`;
-
-const GET_COLLECTION_PRODUCTS = `#graphql
-  query GetCollectionProducts($id: ID!, $first: Int!, $after: String) {
-    collection(id: $id) {
-      products(first: $first, after: $after) {
-        pageInfo { hasNextPage endCursor }
-        edges { node { id title vendor productType tags } }
+      edges {
+        node {
+          id
+          name
+          tags
+          displayFinancialStatus
+          totalPriceSet { shopMoney { amount currencyCode } }
+          customer {
+            displayName
+            defaultEmailAddress { emailAddress }
+          }
+        }
       }
     }
-  }`;
-
-const GET_FILTER_OPTIONS = `#graphql
-  query GetFilterOptions($first: Int!) {
-    collections(first: $first) {
-      edges { node { id title } }
-    }
-    productVendors(first: 250) { edges { node } }
-    productTypes(first: 250) { edges { node } }
   }`;
 
 const TAGS_ADD = `#graphql
@@ -112,47 +87,42 @@ const TAGS_REMOVE = `#graphql
     }
   }`;
 
+const FINANCIAL_STATUSES = [
+  { value: "pending", label: "Pending" },
+  { value: "authorized", label: "Authorized" },
+  { value: "partially_paid", label: "Partially paid" },
+  { value: "paid", label: "Paid" },
+  { value: "partially_refunded", label: "Partially refunded" },
+  { value: "refunded", label: "Refunded" },
+  { value: "voided", label: "Voided" },
+];
+
 // ─── Loader ──────────────────────────────────────────────────────────────────
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
   const url = new URL(request.url);
 
-  const collectionId = url.searchParams.get("collection");
-  const vendor = url.searchParams.get("vendor");
-  const productType = url.searchParams.get("productType");
-  const tag = url.searchParams.get("tag");
-  const titleQuery = url.searchParams.get("query");
+  const searchQuery = url.searchParams.get("query");
+  const financialStatus = url.searchParams.get("financialStatus");
   const after = url.searchParams.get("after");
 
   const queryParts: string[] = [];
-  if (vendor) queryParts.push(`vendor:${vendor}`);
-  if (productType) queryParts.push(`product_type:${productType}`);
-  if (tag) queryParts.push(`tag:${tag}`);
-  if (titleQuery) queryParts.push(`title:${titleQuery}*`);
-  const searchQuery = queryParts.length > 0 ? queryParts.join(" ") : undefined;
+  if (searchQuery) queryParts.push(searchQuery);
+  if (financialStatus) queryParts.push(`financial_status:${financialStatus}`);
+  const combinedQuery = queryParts.length > 0 ? queryParts.join(" ") : undefined;
 
-  const [productsRes, filterRes] = await Promise.all([
-    collectionId
-      ? admin.graphql(GET_COLLECTION_PRODUCTS, { variables: { id: collectionId, first: 50, after } })
-      : admin.graphql(GET_PRODUCTS, { variables: { first: 50, after, query: searchQuery } }),
-    admin.graphql(GET_FILTER_OPTIONS, { variables: { first: 250 } }),
-  ]);
+  const res = await admin.graphql(GET_ORDERS, {
+    variables: { first: 50, after, query: combinedQuery },
+  });
 
-  const productsJson = (await productsRes.json()) as ProductsResponse;
-  const filterJson = (await filterRes.json()) as FilterOptionsResponse;
-
-  const productConn = collectionId
-    ? productsJson.data?.collection?.products
-    : productsJson.data?.products;
+  const json = (await res.json()) as OrdersResponse;
+  const conn = json.data?.orders;
 
   return {
-    products: (productConn?.edges ?? []).map((e) => e.node),
-    pageInfo: productConn?.pageInfo ?? { hasNextPage: false, endCursor: null },
-    collections: (filterJson.data?.collections?.edges ?? []).map((e) => e.node),
-    vendors: (filterJson.data?.productVendors?.edges ?? []).map((e) => e.node),
-    productTypes: (filterJson.data?.productTypes?.edges ?? []).map((e) => e.node),
-    filters: { collection: collectionId, vendor, productType, tag, query: titleQuery, after },
+    orders: (conn?.edges ?? []).map((e) => e.node),
+    pageInfo: conn?.pageInfo ?? { hasNextPage: false, endCursor: null },
+    filters: { query: searchQuery, financialStatus, after },
   } satisfies LoaderData;
 };
 
@@ -163,7 +133,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
 
   const intent = formData.get("intent") as "add" | "remove" | "replace";
-  const productIds = JSON.parse(formData.get("productIds") as string) as string[];
+  const orderIds = JSON.parse(formData.get("orderIds") as string) as string[];
   const tags = (formData.get("tags") as string)
     .split(",")
     .map((t) => t.trim())
@@ -193,16 +163,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   };
 
   if (intent === "add") {
-    await runMutation(TAGS_ADD, productIds, () => tags);
+    await runMutation(TAGS_ADD, orderIds, () => tags);
   } else if (intent === "remove") {
-    await runMutation(TAGS_REMOVE, productIds, () => tags);
+    await runMutation(TAGS_REMOVE, orderIds, () => tags);
   } else {
-    // replace: remove all current tags, then add new ones
     const currentTagsMap = JSON.parse(
       formData.get("currentTags") as string,
     ) as Record<string, string[]>;
-    await runMutation(TAGS_REMOVE, productIds, (id) => currentTagsMap[id] ?? []);
-    await runMutation(TAGS_ADD, productIds, () => tags);
+    await runMutation(TAGS_REMOVE, orderIds, (id) => currentTagsMap[id] ?? []);
+    await runMutation(TAGS_ADD, orderIds, () => tags);
   }
 
   return { success: errorCount === 0, errorCount } satisfies ActionData;
@@ -210,9 +179,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export default function Products() {
-  const { products, pageInfo, collections, vendors, productTypes, filters } =
-    useLoaderData<typeof loader>();
+export default function Orders() {
+  const { orders, pageInfo, filters } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
   const shopify = useAppBridge();
   const navigate = useNavigate();
@@ -220,20 +188,15 @@ export default function Products() {
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
-
-  // Local state for text filter fields (applied on button click)
   const [localQuery, setLocalQuery] = useState(filters.query ?? "");
-  const [localTag, setLocalTag] = useState(filters.tag ?? "");
 
   const wasSubmitting = useRef(false);
   const isSubmitting = fetcher.state === "submitting";
 
   const allSelected =
-    products.length > 0 && products.every((p) => selectedIds.includes(p.id));
-  const hasFilters =
-    filters.collection || filters.vendor || filters.productType || filters.tag || filters.query;
+    orders.length > 0 && orders.every((o) => selectedIds.includes(o.id));
+  const hasFilters = filters.query || filters.financialStatus;
 
-  // Detect action completion and show toast
   useEffect(() => {
     if (fetcher.state === "submitting") {
       wasSubmitting.current = true;
@@ -251,12 +214,10 @@ export default function Products() {
     }
   }, [fetcher.state, fetcher.data]);
 
-  // Reset local text fields when loader filters change (e.g. after clear)
   useEffect(() => {
     setLocalQuery(filters.query ?? "");
-    setLocalTag(filters.tag ?? "");
     setSelectedIds([]);
-  }, [filters.query, filters.tag, filters.collection, filters.vendor, filters.productType]);
+  }, [filters.query, filters.financialStatus]);
 
   const applyFilter = (updates: Partial<Record<keyof Filters, string | null>>) => {
     const url = new URL(window.location.href);
@@ -268,23 +229,18 @@ export default function Products() {
     navigate(url.pathname + url.search);
   };
 
-  const applyTextFilters = () => {
-    applyFilter({ query: localQuery || null, tag: localTag || null });
-  };
-
   const clearFilters = () => {
     setLocalQuery("");
-    setLocalTag("");
-    navigate("/app/products");
+    navigate("/app/orders");
   };
 
   const submitTagOperation = (intent: "add" | "remove" | "replace") => {
     const currentTags: Record<string, string[]> = {};
-    for (const p of products) currentTags[p.id] = p.tags;
+    for (const o of orders) currentTags[o.id] = o.tags;
     fetcher.submit(
       {
         intent,
-        productIds: JSON.stringify(selectedIds),
+        orderIds: JSON.stringify(selectedIds),
         tags: tagInput,
         currentTags: JSON.stringify(currentTags),
       },
@@ -299,74 +255,41 @@ export default function Products() {
   };
 
   return (
-    <s-page heading="Products">
+    <s-page heading="Orders">
       {/* Filter bar */}
       <s-section heading="Filters">
         <s-stack direction="block" gap="base">
           <s-stack direction="inline" gap="base" alignItems="center">
             <s-search-field
-              label="Title"
-              placeholder="Search products"
+              label="Search orders"
+              placeholder="Order number or customer email"
               labelAccessibilityVisibility="exclusive"
               value={localQuery}
               onInput={(e: Event) =>
                 setLocalQuery((e.target as HTMLInputElement).value)
               }
             />
-            <s-text-field
-              label="Tag"
-              placeholder="Filter by tag"
-              labelAccessibilityVisibility="exclusive"
-              value={localTag}
-              onInput={(e: Event) =>
-                setLocalTag((e.target as HTMLInputElement).value)
-              }
-            />
             <s-select
-              label="Collection"
-              value={filters.collection ?? ""}
+              label="Financial status"
+              value={filters.financialStatus ?? ""}
               onChange={(e: Event) =>
-                applyFilter({ collection: (e.target as HTMLSelectElement).value || null })
+                applyFilter({
+                  financialStatus: (e.target as HTMLSelectElement).value || null,
+                })
               }
             >
-              <s-option value="">All collections</s-option>
-              {collections.map((c) => (
-                <s-option key={c.id} value={c.id}>
-                  {c.title}
-                </s-option>
-              ))}
-            </s-select>
-            <s-select
-              label="Vendor"
-              value={filters.vendor ?? ""}
-              onChange={(e: Event) =>
-                applyFilter({ vendor: (e.target as HTMLSelectElement).value || null })
-              }
-            >
-              <s-option value="">All vendors</s-option>
-              {vendors.map((v) => (
-                <s-option key={v} value={v}>
-                  {v}
-                </s-option>
-              ))}
-            </s-select>
-            <s-select
-              label="Product type"
-              value={filters.productType ?? ""}
-              onChange={(e: Event) =>
-                applyFilter({ productType: (e.target as HTMLSelectElement).value || null })
-              }
-            >
-              <s-option value="">All types</s-option>
-              {productTypes.map((pt) => (
-                <s-option key={pt} value={pt}>
-                  {pt}
+              <s-option value="">All statuses</s-option>
+              {FINANCIAL_STATUSES.map((s) => (
+                <s-option key={s.value} value={s.value}>
+                  {s.label}
                 </s-option>
               ))}
             </s-select>
           </s-stack>
           <s-stack direction="inline" gap="base">
-            <s-button onClick={applyTextFilters}>Apply filters</s-button>
+            <s-button onClick={() => applyFilter({ query: localQuery || null })}>
+              Apply filters
+            </s-button>
             {hasFilters && (
               <s-button variant="tertiary" onClick={clearFilters}>
                 Clear
@@ -376,12 +299,12 @@ export default function Products() {
         </s-stack>
       </s-section>
 
-      {/* Bulk action bar — visible when products are selected */}
+      {/* Bulk action bar */}
       {selectedIds.length > 0 && (
         <s-section>
           <s-stack direction="inline" gap="base" alignItems="center">
             <s-text>
-              {selectedIds.length} product{selectedIds.length !== 1 ? "s" : ""} selected
+              {selectedIds.length} order{selectedIds.length !== 1 ? "s" : ""} selected
             </s-text>
             <s-button commandFor="modal-add">Add Tags</s-button>
             <s-button commandFor="modal-remove">Remove Tags</s-button>
@@ -392,12 +315,14 @@ export default function Products() {
         </s-section>
       )}
 
-      {/* Product table */}
+      {/* Orders table */}
       <s-section>
-        {products.length === 0 ? (
+        {orders.length === 0 ? (
           <s-paragraph>
-            No products found.{" "}
-            {hasFilters ? "Try adjusting your filters." : "Add products to your store to get started."}
+            No orders found.{" "}
+            {hasFilters
+              ? "Try adjusting your filters."
+              : "No orders in your store yet."}
           </s-paragraph>
         ) : (
           <s-stack direction="block" gap="base">
@@ -406,44 +331,55 @@ export default function Products() {
                 <s-table-header listSlot="primary">
                   <s-stack direction="inline" gap="base" alignItems="center">
                     <s-checkbox
-                      label="Select all products"
+                      label="Select all orders"
                       checked={allSelected}
                       onChange={() =>
-                        setSelectedIds(allSelected ? [] : products.map((p) => p.id))
+                        setSelectedIds(allSelected ? [] : orders.map((o) => o.id))
                       }
                     />
-                    <s-text>Title</s-text>
+                    <s-text>Order</s-text>
                   </s-stack>
                 </s-table-header>
-                <s-table-header listSlot="labeled">Vendor</s-table-header>
-                <s-table-header listSlot="labeled">Type</s-table-header>
+                <s-table-header listSlot="labeled">Customer</s-table-header>
+                <s-table-header listSlot="labeled">Status</s-table-header>
+                <s-table-header listSlot="labeled">Total</s-table-header>
                 <s-table-header listSlot="labeled">Tags</s-table-header>
               </s-table-header-row>
               <s-table-body>
-                {products.map((product) => (
-                  <s-table-row key={product.id}>
+                {orders.map((order) => (
+                  <s-table-row key={order.id}>
                     <s-table-cell>
                       <s-stack direction="inline" gap="base" alignItems="center">
                         <s-checkbox
-                          label={`Select ${product.title}`}
-                          checked={selectedIds.includes(product.id)}
+                          label={`Select ${order.name}`}
+                          checked={selectedIds.includes(order.id)}
                           onChange={() =>
                             setSelectedIds((prev) =>
-                              prev.includes(product.id)
-                                ? prev.filter((id) => id !== product.id)
-                                : [...prev, product.id],
+                              prev.includes(order.id)
+                                ? prev.filter((id) => id !== order.id)
+                                : [...prev, order.id],
                             )
                           }
                         />
-                        <s-text>{product.title}</s-text>
+                        <s-text>{order.name}</s-text>
                       </s-stack>
                     </s-table-cell>
-                    <s-table-cell>{product.vendor || "—"}</s-table-cell>
-                    <s-table-cell>{product.productType || "—"}</s-table-cell>
+                    <s-table-cell>
+                      <s-text>{order.customer?.displayName ?? "—"}</s-text>
+                    </s-table-cell>
+                    <s-table-cell>
+                      <s-text>{order.displayFinancialStatus ?? "—"}</s-text>
+                    </s-table-cell>
+                    <s-table-cell>
+                      <s-text>
+                        {order.totalPriceSet.shopMoney.amount}{" "}
+                        {order.totalPriceSet.shopMoney.currencyCode}
+                      </s-text>
+                    </s-table-cell>
                     <s-table-cell>
                       <s-stack direction="inline" gap="base">
-                        {product.tags.length > 0
-                          ? product.tags.map((t) => <s-chip key={t}>{t}</s-chip>)
+                        {order.tags.length > 0
+                          ? order.tags.map((t) => <s-chip key={t}>{t}</s-chip>)
                           : <s-text tone="neutral">No tags</s-text>}
                       </s-stack>
                     </s-table-cell>
@@ -454,7 +390,7 @@ export default function Products() {
 
             {pageInfo.hasNextPage && (
               <s-button variant="tertiary" onClick={loadNextPage}>
-                Load more products
+                Load more orders
               </s-button>
             )}
           </s-stack>
@@ -465,14 +401,16 @@ export default function Products() {
       <s-modal id="modal-add" heading="Add Tags">
         <s-stack direction="block" gap="base">
           <s-text>
-            Add tags to {selectedIds.length} selected product
+            Add tags to {selectedIds.length} selected order
             {selectedIds.length !== 1 ? "s" : ""}.
           </s-text>
           <s-text-field
             label="Tags (comma-separated)"
-            placeholder="summer, sale, new-arrival"
+            placeholder="vip, wholesale, reviewed"
             value={tagInput}
-            onInput={(e: Event) => setTagInput((e.target as HTMLInputElement).value)}
+            onInput={(e: Event) =>
+              setTagInput((e.target as HTMLInputElement).value)
+            }
           />
         </s-stack>
         <s-button
@@ -483,7 +421,12 @@ export default function Products() {
         >
           Add Tags
         </s-button>
-        <s-button slot="secondary-actions" variant="secondary" commandFor="modal-add" command="--hide">
+        <s-button
+          slot="secondary-actions"
+          variant="secondary"
+          commandFor="modal-add"
+          command="--hide"
+        >
           Cancel
         </s-button>
       </s-modal>
@@ -492,14 +435,16 @@ export default function Products() {
       <s-modal id="modal-remove" heading="Remove Tags">
         <s-stack direction="block" gap="base">
           <s-text>
-            Remove tags from {selectedIds.length} selected product
+            Remove tags from {selectedIds.length} selected order
             {selectedIds.length !== 1 ? "s" : ""}.
           </s-text>
           <s-text-field
             label="Tags to remove (comma-separated)"
-            placeholder="summer, sale, new-arrival"
+            placeholder="vip, wholesale, reviewed"
             value={tagInput}
-            onInput={(e: Event) => setTagInput((e.target as HTMLInputElement).value)}
+            onInput={(e: Event) =>
+              setTagInput((e.target as HTMLInputElement).value)
+            }
           />
         </s-stack>
         <s-button
@@ -510,7 +455,12 @@ export default function Products() {
         >
           Remove Tags
         </s-button>
-        <s-button slot="secondary-actions" variant="secondary" commandFor="modal-remove" command="--hide">
+        <s-button
+          slot="secondary-actions"
+          variant="secondary"
+          commandFor="modal-remove"
+          command="--hide"
+        >
           Cancel
         </s-button>
       </s-modal>
@@ -519,15 +469,17 @@ export default function Products() {
       <s-modal id="modal-replace" heading="Replace All Tags">
         <s-stack direction="block" gap="base">
           <s-text>
-            Replace all existing tags on {selectedIds.length} selected product
+            Replace all existing tags on {selectedIds.length} selected order
             {selectedIds.length !== 1 ? "s" : ""}. Current tags will be removed
             and replaced with the tags you enter below.
           </s-text>
           <s-text-field
             label="New tags (comma-separated)"
-            placeholder="summer, sale, new-arrival"
+            placeholder="vip, wholesale, reviewed"
             value={tagInput}
-            onInput={(e: Event) => setTagInput((e.target as HTMLInputElement).value)}
+            onInput={(e: Event) =>
+              setTagInput((e.target as HTMLInputElement).value)
+            }
           />
         </s-stack>
         <s-button
@@ -539,7 +491,12 @@ export default function Products() {
         >
           Replace Tags
         </s-button>
-        <s-button slot="secondary-actions" variant="secondary" commandFor="modal-replace" command="--hide">
+        <s-button
+          slot="secondary-actions"
+          variant="secondary"
+          commandFor="modal-replace"
+          command="--hide"
+        >
           Cancel
         </s-button>
       </s-modal>
