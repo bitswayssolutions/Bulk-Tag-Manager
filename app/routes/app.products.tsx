@@ -118,12 +118,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
   const url = new URL(request.url);
 
-  const collectionId = url.searchParams.get("collection");
-  const vendor = url.searchParams.get("vendor");
-  const productType = url.searchParams.get("productType");
-  const tag = url.searchParams.get("tag");
-  const titleQuery = url.searchParams.get("query");
-  const after = url.searchParams.get("after");
+  const rawCollection = url.searchParams.get("collection");
+  const collectionId = rawCollection?.startsWith("gid://shopify/Collection/") ? rawCollection : null;
+  const vendor = url.searchParams.get("vendor") || null;
+  const productType = url.searchParams.get("productType") || null;
+  const tag = url.searchParams.get("tag") || null;
+  const titleQuery = url.searchParams.get("query") || null;
+  const after = url.searchParams.get("after") || null;
 
   const queryParts: string[] = [];
   if (vendor) queryParts.push(`vendor:${vendor}`);
@@ -259,13 +260,20 @@ export default function Products() {
   }, [filters.query, filters.tag, filters.collection, filters.vendor, filters.productType]);
 
   const applyFilter = (updates: Partial<Record<keyof Filters, string | null>>) => {
-    const url = new URL(window.location.href);
-    for (const [key, value] of Object.entries(updates)) {
-      if (value) url.searchParams.set(key, value);
-      else url.searchParams.delete(key);
+    const merged: Record<string, string | null | undefined> = {
+      collection: filters.collection,
+      vendor: filters.vendor,
+      productType: filters.productType,
+      tag: filters.tag,
+      query: filters.query,
+      ...updates,
+    };
+    const params = new URLSearchParams();
+    for (const [key, val] of Object.entries(merged)) {
+      if (val) params.set(key, val);
     }
-    url.searchParams.delete("after");
-    navigate(url.pathname + url.search);
+    const search = params.toString();
+    navigate(`/app/products${search ? `?${search}` : ""}`);
   };
 
   const applyTextFilters = () => {
