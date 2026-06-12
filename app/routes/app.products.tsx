@@ -333,9 +333,10 @@ export default function Products() {
             <s-select
               label="Collection"
               value={filters.collection ?? ""}
-              onChange={(e: Event) =>
-                applyFilter({ collection: (e.target as HTMLSelectElement).value || null })
-              }
+              onChange={(e: Event) => {
+                const val = (e.target as HTMLSelectElement).value;
+                applyFilter({ collection: collections.some((c) => c.id === val) ? val : null });
+              }}
             >
               <s-option value="">All collections</s-option>
               {collections.map((c) => (
@@ -347,9 +348,10 @@ export default function Products() {
             <s-select
               label="Vendor"
               value={filters.vendor ?? ""}
-              onChange={(e: Event) =>
-                applyFilter({ vendor: (e.target as HTMLSelectElement).value || null })
-              }
+              onChange={(e: Event) => {
+                const val = (e.target as HTMLSelectElement).value;
+                applyFilter({ vendor: vendors.includes(val) ? val : null });
+              }}
             >
               <s-option value="">All vendors</s-option>
               {vendors.map((v) => (
@@ -361,9 +363,10 @@ export default function Products() {
             <s-select
               label="Product type"
               value={filters.productType ?? ""}
-              onChange={(e: Event) =>
-                applyFilter({ productType: (e.target as HTMLSelectElement).value || null })
-              }
+              onChange={(e: Event) => {
+                const val = (e.target as HTMLSelectElement).value;
+                applyFilter({ productType: productTypes.includes(val) ? val : null });
+              }}
             >
               <s-option value="">All types</s-option>
               {productTypes.map((pt) => (
