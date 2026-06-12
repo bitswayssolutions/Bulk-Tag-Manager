@@ -228,6 +228,7 @@ export default function Products() {
 
   const wasSubmitting = useRef(false);
   const isSubmitting = fetcher.state === "submitting";
+  const activeModalId = useRef<string | null>(null);
   const textSearchTimer = useRef<ReturnType<typeof setTimeout>>();
   // Always-fresh ref so debounce timer doesn't close over stale applyFilter
   const applyFilterRef = useRef<(updates: Partial<Record<keyof Filters, string | null>>) => void>(
@@ -251,6 +252,11 @@ export default function Products() {
         setSelectedIds([]);
         setTagInput("");
         revalidator.revalidate();
+        if (activeModalId.current) {
+          const el = document.getElementById(activeModalId.current) as (HTMLElement & { hide(): void }) | null;
+          el?.hide();
+          activeModalId.current = null;
+        }
       } else {
         shopify.toast.show(`${fetcher.data.errorCount} error(s) occurred`, { isError: true });
       }
@@ -306,6 +312,7 @@ export default function Products() {
   };
 
   const submitTagOperation = (intent: "add" | "remove" | "replace") => {
+    activeModalId.current = `modal-${intent}`;
     const currentTags: Record<string, string[]> = {};
     for (const p of products) currentTags[p.id] = p.tags;
     fetcher.submit(
