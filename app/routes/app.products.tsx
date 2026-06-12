@@ -228,6 +228,11 @@ export default function Products() {
 
   const wasSubmitting = useRef(false);
   const isSubmitting = fetcher.state === "submitting";
+  const textSearchTimer = useRef<ReturnType<typeof setTimeout>>();
+  // Always-fresh ref so debounce timer doesn't close over stale applyFilter
+  const applyFilterRef = useRef<(updates: Partial<Record<keyof Filters, string | null>>) => void>(
+    () => undefined,
+  );
 
   const allSelected =
     products.length > 0 && products.every((p) => selectedIds.includes(p.id));
@@ -276,7 +281,21 @@ export default function Products() {
     navigate(`/app/products${search ? `?${search}` : ""}`);
   };
 
+  // Keep ref current so the debounce timer always calls the latest applyFilter
+  applyFilterRef.current = applyFilter;
+
+  // Debounce text filter changes — applies 400 ms after user stops typing
+  useEffect(() => {
+    if (localQuery === (filters.query ?? "") && localTag === (filters.tag ?? "")) return;
+    clearTimeout(textSearchTimer.current);
+    textSearchTimer.current = setTimeout(() => {
+      applyFilterRef.current({ query: localQuery || null, tag: localTag || null });
+    }, 400);
+    return () => clearTimeout(textSearchTimer.current);
+  }, [localQuery, localTag]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const applyTextFilters = () => {
+    clearTimeout(textSearchTimer.current);
     applyFilter({ query: localQuery || null, tag: localTag || null });
   };
 
