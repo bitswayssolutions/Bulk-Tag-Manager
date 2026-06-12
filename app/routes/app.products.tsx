@@ -479,6 +479,9 @@ export default function Products() {
         >
           Add Tags
         </s-button>
+        <s-button slot="secondary-actions" variant="secondary" commandFor="modal-add" command="--hide">
+          Cancel
+        </s-button>
       </s-modal>
 
       {/* Remove Tags Modal */}
@@ -503,6 +506,9 @@ export default function Products() {
         >
           Remove Tags
         </s-button>
+        <s-button slot="secondary-actions" variant="secondary" commandFor="modal-remove" command="--hide">
+          Cancel
+        </s-button>
       </s-modal>
 
       {/* Replace Tags Modal */}
@@ -522,11 +528,15 @@ export default function Products() {
         </s-stack>
         <s-button
           slot="primary-action"
+          variant="primary"
           tone="critical"
           {...(isSubmitting ? { loading: true } : {})}
           onClick={() => submitTagOperation("replace")}
         >
           Replace Tags
+        </s-button>
+        <s-button slot="secondary-actions" variant="secondary" commandFor="modal-replace" command="--hide">
+          Cancel
         </s-button>
       </s-modal>
     </s-page>
