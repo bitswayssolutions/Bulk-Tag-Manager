@@ -404,17 +404,13 @@ export default function Products() {
             <s-table variant="auto">
               <s-table-header-row>
                 <s-table-header listSlot="primary">
-                  <s-stack direction="inline" gap="base" alignItems="center">
-                    <s-checkbox
-                      label="Select all products"
-                      labelAccessibilityVisibility="exclusive"
-                      checked={allSelected}
-                      onChange={() =>
-                        setSelectedIds(allSelected ? [] : products.map((p) => p.id))
-                      }
-                    />
-                    <s-text>Title</s-text>
-                  </s-stack>
+                  <s-checkbox
+                    label="Title"
+                    checked={allSelected}
+                    onChange={() =>
+                      setSelectedIds(allSelected ? [] : products.map((p) => p.id))
+                    }
+                  />
                 </s-table-header>
                 <s-table-header listSlot="labeled">Vendor</s-table-header>
                 <s-table-header listSlot="labeled">Type</s-table-header>
@@ -424,21 +420,17 @@ export default function Products() {
                 {products.map((product) => (
                   <s-table-row key={product.id}>
                     <s-table-cell>
-                      <s-stack direction="inline" gap="base" alignItems="center">
-                        <s-checkbox
-                          label={`Select ${product.title}`}
-                          labelAccessibilityVisibility="exclusive"
-                          checked={selectedIds.includes(product.id)}
-                          onChange={() =>
-                            setSelectedIds((prev) =>
-                              prev.includes(product.id)
-                                ? prev.filter((id) => id !== product.id)
-                                : [...prev, product.id],
-                            )
-                          }
-                        />
-                        <s-text>{product.title}</s-text>
-                      </s-stack>
+                      <s-checkbox
+                        label={product.title}
+                        checked={selectedIds.includes(product.id)}
+                        onChange={() =>
+                          setSelectedIds((prev) =>
+                            prev.includes(product.id)
+                              ? prev.filter((id) => id !== product.id)
+                              : [...prev, product.id],
+                          )
+                        }
+                      />
                     </s-table-cell>
                     <s-table-cell>{product.vendor || "—"}</s-table-cell>
                     <s-table-cell>{product.productType || "—"}</s-table-cell>
