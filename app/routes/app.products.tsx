@@ -407,6 +407,7 @@ export default function Products() {
                   <s-stack direction="inline" gap="base" alignItems="center">
                     <s-checkbox
                       label="Select all products"
+                      labelAccessibilityVisibility="exclusive"
                       checked={allSelected}
                       onChange={() =>
                         setSelectedIds(allSelected ? [] : products.map((p) => p.id))
