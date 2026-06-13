@@ -1,7 +1,7 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "b0cb314f402ff59d2ea5cba80aed2083"
-application_url = "https://example.com"
+application_url = "https://bulk-tag-manager.vercel.app"
 embedded = true
 name = "bulk-tag-manager"
 
@@ -45,7 +45,7 @@ api_version = "2026-07"
   topics = [ "app/scopes_update" ]
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://bulk-tag-manager.vercel.app/api/auth" ]
 
 [build]
 include_config_on_deploy = true

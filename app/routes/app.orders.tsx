@@ -210,9 +210,20 @@ export default function Orders() {
         setTagInput("");
         revalidator.revalidate();
         if (activeModalId.current) {
-          const el = document.getElementById(activeModalId.current) as (HTMLElement & { hide(): void }) | null;
-          el?.hide();
+          const modalId = activeModalId.current;
           activeModalId.current = null;
+          const el = document.getElementById(modalId);
+          if (el) {
+            const m = el as HTMLElement & { hide?(): void; close?(): void };
+            if (typeof m.hide === "function") {
+              m.hide();
+            } else if (typeof m.close === "function") {
+              m.close();
+            } else {
+              (el.querySelector<HTMLElement>('[command="--hide"]') ??
+                el.querySelector<HTMLElement>('[slot="secondary-actions"]'))?.click();
+            }
+          }
         }
       } else {
         shopify.toast.show(`${fetcher.data.errorCount} error(s) occurred`, { isError: true });
