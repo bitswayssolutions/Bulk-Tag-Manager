@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
 import { useLoaderData, useNavigate, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
@@ -81,6 +81,8 @@ export default function Collections() {
   const { collections, pageInfo, filters } = useLoaderData<typeof loader>();
   const navigate = useNavigate();
   const [localQuery, setLocalQuery] = useState(filters.query ?? "");
+  const searchTimer = useRef<ReturnType<typeof setTimeout>>();
+  const applySearchRef = useRef<(query: string | null) => void>(() => undefined);
 
   const applySearch = (query: string | null) => {
     const url = new URL(window.location.href);
@@ -89,6 +91,21 @@ export default function Collections() {
     url.searchParams.delete("after");
     navigate(url.pathname + url.search);
   };
+
+  applySearchRef.current = applySearch;
+
+  useEffect(() => {
+    if (localQuery === (filters.query ?? "")) return;
+    clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      applySearchRef.current(localQuery || null);
+    }, 400);
+    return () => clearTimeout(searchTimer.current);
+  }, [localQuery]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    setLocalQuery(filters.query ?? "");
+  }, [filters.query]);
 
   const loadNextPage = () => {
     const url = new URL(window.location.href);
