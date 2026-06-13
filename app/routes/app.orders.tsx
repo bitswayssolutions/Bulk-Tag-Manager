@@ -193,6 +193,8 @@ export default function Orders() {
   const wasSubmitting = useRef(false);
   const isSubmitting = fetcher.state === "submitting";
   const activeModalId = useRef<string | null>(null);
+  const textSearchTimer = useRef<ReturnType<typeof setTimeout>>();
+  const applyFilterRef = useRef<(updates: Partial<Record<keyof Filters, string | null>>) => void>(() => undefined);
 
   const allSelected =
     orders.length > 0 && orders.every((o) => selectedIds.includes(o.id));
@@ -245,6 +247,17 @@ export default function Orders() {
     url.searchParams.delete("after");
     navigate(url.pathname + url.search);
   };
+
+  applyFilterRef.current = applyFilter;
+
+  useEffect(() => {
+    if (localQuery === (filters.query ?? "")) return;
+    clearTimeout(textSearchTimer.current);
+    textSearchTimer.current = setTimeout(() => {
+      applyFilterRef.current({ query: localQuery || null });
+    }, 400);
+    return () => clearTimeout(textSearchTimer.current);
+  }, [localQuery]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const clearFilters = () => {
     setLocalQuery("");
