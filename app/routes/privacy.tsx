@@ -90,7 +90,7 @@ export default function Privacy() {
           <h2>Contact</h2>
           <p>
             For any privacy-related questions, contact us at{" "}
-            <a href="mailto:devkulvir@gmail.com">devkulvir@gmail.com</a>.
+            <a href="mailto:bitswayssolutions@gmail.com">bitswayssolutions@gmail.com</a>.
           </p>
         </div>
       </body>
