@@ -12,14 +12,15 @@ npm run setup        # prisma generate + prisma migrate deploy (run after schema
 npm run lint         # ESLint
 npm run typecheck    # React Router typegen + tsc --noEmit
 npm run graphql-codegen  # Generate TypeScript types from GraphQL queries into app/types/
-npm run deploy       # Deploy to Shopify Partners
+npm run deploy       # Sync shopify.app.toml config to Shopify Partners
 ```
 
 After changing `prisma/schema.prisma`, run `npm run setup` to apply migrations.
+After changing `shopify.app.toml`, run `npm run deploy` to sync with Shopify Partners.
 
 ## Architecture
 
-This is a **Shopify embedded app** using React Router v7, the `@shopify/shopify-app-react-router` adapter, and Prisma + SQLite for session storage.
+This is a **Shopify embedded app** using React Router v7, the `@shopify/shopify-app-react-router` adapter, and Prisma + Supabase PostgreSQL for session storage.
 
 **Request flow for protected routes:**
 Every loader and action under `app/*` must call `await authenticate.admin(request)` from `app/shopify.server.ts`. This validates the session, performs OAuth if needed, and returns an `admin` object for making Shopify Admin GraphQL calls.
@@ -31,7 +32,7 @@ Every loader and action under `app/*` must call `await authenticate.admin(reques
 - `app/routes/webhooks.*.tsx` — Webhook handlers; use `authenticate.webhook(request)` instead of `authenticate.admin`
 
 **Routing:**
-Uses `@react-router/fs-routes` flat-file conventions. Route files map to URL paths: `app._index.tsx` → `/app`, `app.additional.tsx` → `/app/additional`. Subdirectory routes use a `route.tsx` entry point (e.g. `routes/_index/route.tsx`).
+Uses `@react-router/fs-routes` flat-file conventions. Route files map to URL paths: `app._index.tsx` → `/app`, `app.products.tsx` → `/app/products`. The root `_index/route.tsx` always redirects to `/app`.
 
 **UI components:**
 Uses Polaris web components via `<s-*>` custom elements (`<s-page>`, `<s-button>`, `<s-section>`, `<s-stack>`, etc.). These are Shopify's App Home Polaris components — not standard Polaris React. Do not use regular `<a>` tags; use `<s-link>` or React Router `Link`.
@@ -40,7 +41,7 @@ Uses Polaris web components via `<s-*>` custom elements (`<s-page>`, `<s-button>
 Call `admin.graphql(` `` `#graphql ...` `` `)` from the `admin` object returned by `authenticate.admin`. The API version is `October25` (configured in `shopify.server.ts` and `.graphqlrc.ts`). Run `npm run graphql-codegen` to regenerate types after changing queries.
 
 **Webhooks:**
-Declare app-specific webhooks in `shopify.app.toml` (not via `registerWebhooks` afterAuth hook) — Shopify syncs them automatically on deploy. Webhook routes must live outside the `app.tsx` auth wrapper.
+Declare app-specific webhooks in `shopify.app.toml` — Shopify syncs them automatically on deploy. Webhook routes must live outside the `app.tsx` auth wrapper.
 
 **Embedded app navigation:**
 - Use `redirect` returned from `authenticate.admin`, **not** `redirect` from `react-router`
@@ -48,20 +49,28 @@ Declare app-specific webhooks in `shopify.app.toml` (not via `registerWebhooks` 
 - The app is embedded in an iFrame inside the Shopify Admin
 
 **Database:**
-SQLite in development (`prisma/dev.sqlite`). The `Session` model is the only model — it stores Shopify OAuth sessions via `@shopify/shopify-app-session-storage-prisma`. For production with multiple instances, swap to PostgreSQL or MySQL in `prisma/schema.prisma`.
+Prisma + Supabase PostgreSQL. The `Session` model is the only model — it stores Shopify OAuth sessions via `@shopify/shopify-app-session-storage-prisma`. Never add new Prisma models beyond `Session`.
 
 ---
 
 ## App: Bulk Tag Manager — Shopify App
 
 ### Goal
-Bulk add/remove/replace tags across Products, Collections, and Orders. No application database — Shopify is the source of truth for all product/order/collection data.
-
-### Session storage
-Prisma is used ONLY for Shopify session storage (OAuth tokens). Datasource will be switched from SQLite to Supabase Postgres (free tier) for persistence on Vercel. No other data models exist or should be added.
+Bulk add/remove/replace tags across Products, Collections, and Orders. No application database — Shopify is the source of truth for all data.
 
 ### Hosting
-Vercel (not Cloudflare). No wrangler config needed.
+Vercel — connected to GitHub for auto-deploy on push to `main`.
+Build command on Vercel: `npm run setup && npm run build`
+
+### Required environment variables
+| Key | Description |
+|-----|-------------|
+| `SHOPIFY_API_KEY` | From Shopify Partners Dashboard |
+| `SHOPIFY_API_SECRET` | From Shopify Partners Dashboard |
+| `SCOPES` | `write_products,read_orders,write_orders` |
+| `SHOPIFY_APP_URL` | `https://bulk-tag-manager.vercel.app` |
+| `DATABASE_URL` | Supabase connection pooling URL |
+| `DIRECT_URL` | Supabase direct connection URL |
 
 ### MCP
 Shopify Dev MCP is connected for live API/GraphQL lookups. Always use it before writing or modifying GraphQL queries.
@@ -69,24 +78,38 @@ Shopify Dev MCP is connected for live API/GraphQL lookups. Always use it before 
 ### Resources & operations
 - Resources: Products, Collections, Orders
 - Tag operations: Add, Remove, Replace all
-- Filters: by collection, vendor, product type, existing tag, title search
+- Filters: by collection, vendor, product type, existing tag, title search (auto-apply debounce + Apply button)
 
-### Required API scopes
-`read_products`, `write_products`, `read_orders`, `write_orders`, `read_collections`, `write_collections`
+### Routes
+| Route | URL | Description |
+|-------|-----|-------------|
+| `app._index.tsx` | `/app` | Home screen with 3 resource cards |
+| `app.products.tsx` | `/app/products` | Products tag manager — filters, checkboxes, bulk add/remove/replace |
+| `app.collections.tsx` | `/app/collections` | Browse collections, links to products filtered by collection |
+| `app.orders.tsx` | `/app/orders` | Orders tag manager — filters, checkboxes, bulk add/remove/replace |
 
-### Routes to build
-- `app._index.tsx` → home screen, resource picker
-- `app.products.tsx` → products tag manager
-- `app.collections.tsx` → collections tag manager
-- `app.orders.tsx` → orders tag manager
+### Key implementation details
+
+**Filter state** lives in URL params — `navigate()` with updated `URLSearchParams`. Always build the new URL from loader `filters` + updates, not from `window.location.href`, to avoid stale URL during navigation.
+
+**Text filters auto-apply** via 400ms debounce: `useRef` timer + `applyFilterRef` ref pattern (keeps the timer callback fresh without re-running the effect). Apply button also triggers immediately.
+
+**`<s-select>` onChange** — always validate the event value against the known options list before applying (Polaris may return a garbage truthy string for the empty option).
+
+**Modal auto-close** after mutations: `activeModalId` ref tracks which modal is open; on success, close defensively — try `.hide()`, then `.close()`, then click the `[command="--hide"]` button inside the modal.
+
+**GraphQL mutations** are batched in chunks of 10 using `Promise.all` per chunk.
+
+**Collections** don't have `tags` in the Shopify Admin API — the Collections page browses collections and navigates to Products pre-filtered by collection GID (`/app/products?collection=gid://shopify/Collection/...`).
+
+**Collection GID validation** — validate `rawCollection?.startsWith("gid://shopify/Collection/")` in the loader before using it in a GraphQL variable.
 
 ### Rules
-- Read this file at the start of every session
 - Use Shopify Dev MCP for ALL GraphQL queries/mutations
 - Never add new Prisma models beyond `Session`
-- Polaris components only — no custom CSS
+- Polaris `<s-*>` components only — no custom CSS
 - TypeScript strict — no `any`
-- Commit after every completed feature using: `feat: description` / `fix: description` / `chore: description`
+- Commit after every completed feature: `feat:` / `fix:` / `chore:`
 - Never hardcode secrets — use `.env` and Vercel env vars
 
 ### Session start ritual
