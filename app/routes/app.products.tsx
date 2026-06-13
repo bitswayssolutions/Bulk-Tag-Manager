@@ -118,12 +118,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
   const url = new URL(request.url);
 
-  const collectionId = url.searchParams.get("collection");
-  const vendor = url.searchParams.get("vendor");
-  const productType = url.searchParams.get("productType");
-  const tag = url.searchParams.get("tag");
-  const titleQuery = url.searchParams.get("query");
-  const after = url.searchParams.get("after");
+  const rawCollection = url.searchParams.get("collection");
+  const collectionId = rawCollection?.startsWith("gid://shopify/Collection/") ? rawCollection : null;
+  const vendor = url.searchParams.get("vendor") || null;
+  const productType = url.searchParams.get("productType") || null;
+  const tag = url.searchParams.get("tag") || null;
+  const titleQuery = url.searchParams.get("query") || null;
+  const after = url.searchParams.get("after") || null;
 
   const queryParts: string[] = [];
   if (vendor) queryParts.push(`vendor:${vendor}`);
@@ -227,6 +228,12 @@ export default function Products() {
 
   const wasSubmitting = useRef(false);
   const isSubmitting = fetcher.state === "submitting";
+  const activeModalId = useRef<string | null>(null);
+  const textSearchTimer = useRef<ReturnType<typeof setTimeout>>();
+  // Always-fresh ref so debounce timer doesn't close over stale applyFilter
+  const applyFilterRef = useRef<(updates: Partial<Record<keyof Filters, string | null>>) => void>(
+    () => undefined,
+  );
 
   const allSelected =
     products.length > 0 && products.every((p) => selectedIds.includes(p.id));
@@ -245,6 +252,11 @@ export default function Products() {
         setSelectedIds([]);
         setTagInput("");
         revalidator.revalidate();
+        if (activeModalId.current) {
+          const el = document.getElementById(activeModalId.current) as (HTMLElement & { hide(): void }) | null;
+          el?.hide();
+          activeModalId.current = null;
+        }
       } else {
         shopify.toast.show(`${fetcher.data.errorCount} error(s) occurred`, { isError: true });
       }
@@ -259,16 +271,37 @@ export default function Products() {
   }, [filters.query, filters.tag, filters.collection, filters.vendor, filters.productType]);
 
   const applyFilter = (updates: Partial<Record<keyof Filters, string | null>>) => {
-    const url = new URL(window.location.href);
-    for (const [key, value] of Object.entries(updates)) {
-      if (value) url.searchParams.set(key, value);
-      else url.searchParams.delete(key);
+    const merged: Record<string, string | null | undefined> = {
+      collection: filters.collection,
+      vendor: filters.vendor,
+      productType: filters.productType,
+      tag: filters.tag,
+      query: filters.query,
+      ...updates,
+    };
+    const params = new URLSearchParams();
+    for (const [key, val] of Object.entries(merged)) {
+      if (val) params.set(key, val);
     }
-    url.searchParams.delete("after");
-    navigate(url.pathname + url.search);
+    const search = params.toString();
+    navigate(`/app/products${search ? `?${search}` : ""}`);
   };
 
+  // Keep ref current so the debounce timer always calls the latest applyFilter
+  applyFilterRef.current = applyFilter;
+
+  // Debounce text filter changes — applies 400 ms after user stops typing
+  useEffect(() => {
+    if (localQuery === (filters.query ?? "") && localTag === (filters.tag ?? "")) return;
+    clearTimeout(textSearchTimer.current);
+    textSearchTimer.current = setTimeout(() => {
+      applyFilterRef.current({ query: localQuery || null, tag: localTag || null });
+    }, 400);
+    return () => clearTimeout(textSearchTimer.current);
+  }, [localQuery, localTag]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const applyTextFilters = () => {
+    clearTimeout(textSearchTimer.current);
     applyFilter({ query: localQuery || null, tag: localTag || null });
   };
 
@@ -279,6 +312,7 @@ export default function Products() {
   };
 
   const submitTagOperation = (intent: "add" | "remove" | "replace") => {
+    activeModalId.current = `modal-${intent}`;
     const currentTags: Record<string, string[]> = {};
     for (const p of products) currentTags[p.id] = p.tags;
     fetcher.submit(
@@ -325,9 +359,10 @@ export default function Products() {
             <s-select
               label="Collection"
               value={filters.collection ?? ""}
-              onChange={(e: Event) =>
-                applyFilter({ collection: (e.target as HTMLSelectElement).value || null })
-              }
+              onChange={(e: Event) => {
+                const val = (e.target as HTMLSelectElement).value;
+                applyFilter({ collection: collections.some((c) => c.id === val) ? val : null });
+              }}
             >
               <s-option value="">All collections</s-option>
               {collections.map((c) => (
@@ -339,9 +374,10 @@ export default function Products() {
             <s-select
               label="Vendor"
               value={filters.vendor ?? ""}
-              onChange={(e: Event) =>
-                applyFilter({ vendor: (e.target as HTMLSelectElement).value || null })
-              }
+              onChange={(e: Event) => {
+                const val = (e.target as HTMLSelectElement).value;
+                applyFilter({ vendor: vendors.includes(val) ? val : null });
+              }}
             >
               <s-option value="">All vendors</s-option>
               {vendors.map((v) => (
@@ -353,9 +389,10 @@ export default function Products() {
             <s-select
               label="Product type"
               value={filters.productType ?? ""}
-              onChange={(e: Event) =>
-                applyFilter({ productType: (e.target as HTMLSelectElement).value || null })
-              }
+              onChange={(e: Event) => {
+                const val = (e.target as HTMLSelectElement).value;
+                applyFilter({ productType: productTypes.includes(val) ? val : null });
+              }}
             >
               <s-option value="">All types</s-option>
               {productTypes.map((pt) => (
@@ -404,16 +441,13 @@ export default function Products() {
             <s-table variant="auto">
               <s-table-header-row>
                 <s-table-header listSlot="primary">
-                  <s-stack direction="inline" gap="base" alignItems="center">
-                    <s-checkbox
-                      label="Select all products"
-                      checked={allSelected}
-                      onChange={() =>
-                        setSelectedIds(allSelected ? [] : products.map((p) => p.id))
-                      }
-                    />
-                    <s-text>Title</s-text>
-                  </s-stack>
+                  <s-checkbox
+                    label="Title"
+                    checked={allSelected}
+                    onChange={() =>
+                      setSelectedIds(allSelected ? [] : products.map((p) => p.id))
+                    }
+                  />
                 </s-table-header>
                 <s-table-header listSlot="labeled">Vendor</s-table-header>
                 <s-table-header listSlot="labeled">Type</s-table-header>
@@ -423,21 +457,17 @@ export default function Products() {
                 {products.map((product) => (
                   <s-table-row key={product.id}>
                     <s-table-cell>
-                      <s-stack direction="inline" gap="base" alignItems="center">
-                        <s-checkbox
-                          label={`Select ${product.title}`}
-                          labelAccessibilityVisibility="exclusive"
-                          checked={selectedIds.includes(product.id)}
-                          onChange={() =>
-                            setSelectedIds((prev) =>
-                              prev.includes(product.id)
-                                ? prev.filter((id) => id !== product.id)
-                                : [...prev, product.id],
-                            )
-                          }
-                        />
-                        <s-text>{product.title}</s-text>
-                      </s-stack>
+                      <s-checkbox
+                        label={product.title}
+                        checked={selectedIds.includes(product.id)}
+                        onChange={() =>
+                          setSelectedIds((prev) =>
+                            prev.includes(product.id)
+                              ? prev.filter((id) => id !== product.id)
+                              : [...prev, product.id],
+                          )
+                        }
+                      />
                     </s-table-cell>
                     <s-table-cell>{product.vendor || "—"}</s-table-cell>
                     <s-table-cell>{product.productType || "—"}</s-table-cell>

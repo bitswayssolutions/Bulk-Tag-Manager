@@ -192,6 +192,7 @@ export default function Orders() {
 
   const wasSubmitting = useRef(false);
   const isSubmitting = fetcher.state === "submitting";
+  const activeModalId = useRef<string | null>(null);
 
   const allSelected =
     orders.length > 0 && orders.every((o) => selectedIds.includes(o.id));
@@ -208,6 +209,11 @@ export default function Orders() {
         setSelectedIds([]);
         setTagInput("");
         revalidator.revalidate();
+        if (activeModalId.current) {
+          const el = document.getElementById(activeModalId.current) as (HTMLElement & { hide(): void }) | null;
+          el?.hide();
+          activeModalId.current = null;
+        }
       } else {
         shopify.toast.show(`${fetcher.data.errorCount} error(s) occurred`, { isError: true });
       }
@@ -235,6 +241,7 @@ export default function Orders() {
   };
 
   const submitTagOperation = (intent: "add" | "remove" | "replace") => {
+    activeModalId.current = `modal-${intent}`;
     const currentTags: Record<string, string[]> = {};
     for (const o of orders) currentTags[o.id] = o.tags;
     fetcher.submit(
