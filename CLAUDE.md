@@ -28,7 +28,7 @@ Every loader and action under `app/*` must call `await authenticate.admin(reques
 **Key files:**
 - `app/shopify.server.ts` — Shopify app config; exports `authenticate`, `login`, `registerWebhooks`, etc.
 - `app/db.server.ts` — Prisma client singleton (prevents multiple connections in dev HMR)
-- `app/routes/app.tsx` — Parent layout for all `/app/*` routes; authenticates every request and provides `AppProvider` + App Bridge
+- `app/routes/app.tsx` — Parent layout for all `/app/*` routes; authenticates every request and provides `AppProvider` + App Bridge. **Must** export `ErrorBoundary` using `boundary.error()` and `headers` using `boundary.headers()` from `@shopify/shopify-app-react-router/server` — Shopify requires these to propagate auth headers through thrown responses.
 - `app/routes/webhooks.*.tsx` — Webhook handlers; use `authenticate.webhook(request)` instead of `authenticate.admin`
 
 **Routing:**
@@ -41,7 +41,10 @@ Uses Polaris web components via `<s-*>` custom elements (`<s-page>`, `<s-button>
 Call `admin.graphql(` `` `#graphql ...` `` `)` from the `admin` object returned by `authenticate.admin`. The API version is `October25` (configured in `shopify.server.ts` and `.graphqlrc.ts`). Run `npm run graphql-codegen` to regenerate types after changing queries.
 
 **Webhooks:**
-Declare app-specific webhooks in `shopify.app.toml` — Shopify syncs them automatically on deploy. Webhook routes must live outside the `app.tsx` auth wrapper.
+Declare app-specific webhooks in `shopify.app.toml` — Shopify syncs them automatically on deploy. Webhook routes must live outside the `app.tsx` auth wrapper. GDPR compliance webhooks (`customers/data_request`, `customers/redact`, `shop/redact`) are declared under `compliance_topics` in the toml and are **mandatory** for App Store listing.
+
+**`shopify.server.ts` future flags:**
+`expiringOfflineAccessTokens: true` is enabled — Shopify will rotate offline tokens; the adapter handles renewal automatically.
 
 **Embedded app navigation:**
 - Use `redirect` returned from `authenticate.admin`, **not** `redirect` from `react-router`
@@ -61,6 +64,7 @@ Bulk add/remove/replace tags across Products, Collections, and Orders. No applic
 ### Hosting
 Vercel — connected to GitHub for auto-deploy on push to `main`.
 Build command on Vercel: `npm run setup && npm run build`
+Node version: `>=20.19 <22 || >=22.12`
 
 ### Required environment variables
 | Key | Description |
@@ -68,7 +72,7 @@ Build command on Vercel: `npm run setup && npm run build`
 | `SHOPIFY_API_KEY` | From Shopify Partners Dashboard |
 | `SHOPIFY_API_SECRET` | From Shopify Partners Dashboard |
 | `SCOPES` | `write_products,read_orders,write_orders` |
-| `SHOPIFY_APP_URL` | `https://bulk-tag-manager.vercel.app` |
+| `SHOPIFY_APP_URL` | `https://apps.bitsways.com` |
 | `DATABASE_URL` | Supabase connection pooling URL |
 | `DIRECT_URL` | Supabase direct connection URL |
 
@@ -87,6 +91,16 @@ Shopify Dev MCP is connected for live API/GraphQL lookups. Always use it before 
 | `app.products.tsx` | `/app/products` | Products tag manager — filters, checkboxes, bulk add/remove/replace |
 | `app.collections.tsx` | `/app/collections` | Browse collections, links to products filtered by collection |
 | `app.orders.tsx` | `/app/orders` | Orders tag manager — filters, checkboxes, bulk add/remove/replace |
+| `auth.$.tsx` | `/auth/*` | Shopify OAuth handler (managed by the adapter) |
+| `privacy.tsx` | `/privacy` | Public privacy policy page (required for App Store) |
+| `support.tsx` | `/support` | Public support page (required for App Store) |
+| `webhooks.app.uninstalled.tsx` | `/webhooks/app/uninstalled` | Deletes session on uninstall |
+| `webhooks.app.scopes_update.tsx` | `/webhooks/app/scopes_update` | Handles scope changes |
+| `webhooks.customers.data_request.tsx` | `/webhooks/customers/data_request` | GDPR: customer data request |
+| `webhooks.customers.redact.tsx` | `/webhooks/customers/redact` | GDPR: customer data redact |
+| `webhooks.shop.redact.tsx` | `/webhooks/shop/redact` | GDPR: shop data redact |
+
+`privacy.tsx` and `support.tsx` are standalone plain-HTML pages — they are the only files exempt from the `<s-*>` Polaris component rule.
 
 ### Key implementation details
 
